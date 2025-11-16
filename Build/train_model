@@ -1,0 +1,62 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+import tensorflow as tf
+from tensorflow.keras import layers, models
+import joblib
+import json
+import os
+
+CSV_FILE = "finger_landmarks.csv"
+MODEL_FILE = "finger_model.h5"
+SCALER_FILE = "finger_scaler.pkl"
+LABELS_FILE = "finger_label_map.json"
+EPOCHS = 40
+BATCH_SIZE = 32
+
+# Load CSV
+df = pd.read_csv(CSV_FILE).dropna()
+X = df.iloc[:, :-1].values
+y = df.iloc[:, -1].values
+
+# Encode labels
+le = LabelEncoder()
+y_enc = le.fit_transform(y)
+
+# Save label mapping
+with open(LABELS_FILE, "w") as f:
+    json.dump({int(v): str(k) for k,v in zip(le.classes_, range(len(le.classes_)))}, f)
+
+# Split
+X_train, X_test, y_train, y_test = train_test_split(X, y_enc, test_size=0.15, random_state=42, stratify=y_enc)
+
+# Scale features
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+joblib.dump(scaler, SCALER_FILE)
+
+# Build model
+input_shape = X_train.shape[1]
+num_classes = len(np.unique(y_enc))
+
+model = models.Sequential([
+    layers.Input(shape=(input_shape,)),
+    layers.Dense(256, activation='relu'),
+    layers.Dropout(0.4),
+    layers.Dense(128, activation='relu'),
+    layers.Dropout(0.3),
+    layers.Dense(64, activation='relu'),
+    layers.Dense(num_classes, activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+model.summary()
+
+# Train
+model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=EPOCHS, batch_size=BATCH_SIZE)
+
+# Save model
+model.save(MODEL_FILE)
+print(f"Saved model to {MODEL_FILE}")

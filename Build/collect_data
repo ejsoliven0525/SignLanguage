@@ -1,0 +1,94 @@
+import cv2
+import mediapipe as mp
+import numpy as np
+import pandas as pd
+import os
+import time
+
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+
+OUTPUT_CSV = "finger_landmarks.csv"
+CAP_DEVICE = 0
+
+# Create CSV with header if not exists
+if not os.path.exists(OUTPUT_CSV):
+    cols = []
+    for i in range(21):
+        cols += [f"x{i}", f"y{i}", f"z{i}"]
+    cols += ["label"]
+    df = pd.DataFrame(columns=cols)
+    df.to_csv(OUTPUT_CSV, index=False)
+
+def normalize_landmarks(landmarks):
+    data = []
+    for lm in landmarks:
+        data += [lm.x, lm.y, lm.z]
+    return data
+
+def fingers_up(hand_landmarks):
+    tips = [4, 8, 12, 16, 20]  # Thumb, Index, Middle, Ring, Pinky
+    fingers = []
+
+    # Thumb (x check)
+    if hand_landmarks.landmark[tips[0]].x < hand_landmarks.landmark[tips[0]-1].x:
+        fingers.append(1)
+    else:
+        fingers.append(0)
+
+    # Other fingers (y check)
+    for tip in tips[1:]:
+        if hand_landmarks.landmark[tip].y < hand_landmarks.landmark[tip-2].y:
+            fingers.append(1)
+        else:
+            fingers.append(0)
+    return sum(fingers)
+
+def map_count_to_label(count):
+    mapping = {1: "a", 2: "b", 3: "c", 4: "d", 5: "e", 0: "None"}
+    return mapping.get(count, "None")
+
+cap = cv2.VideoCapture(CAP_DEVICE)
+hands = mp_hands.Hands(min_detection_confidence=0.7,
+                       min_tracking_confidence=0.7,
+                       max_num_hands=1)
+
+print("Raise fingers 1–5 to record letters a–e, fist for None.")
+print("Press SPACE to record current frame, ESC to exit.")
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    frame = cv2.flip(frame, 1)
+    h, w, _ = frame.shape
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    res = hands.process(rgb)
+
+    label_text = "None"
+    if res.multi_hand_landmarks:
+        hand = res.multi_hand_landmarks[0]
+        mp_drawing.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS)
+        count = fingers_up(hand)
+        label_text = map_count_to_label(count)
+
+    # Draw overlay
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (10,10), (350,100), (0,0,0), -1)
+    alpha = 0.6
+    cv2.addWeighted(overlay, alpha, frame, 1-alpha, 0, frame)
+    cv2.putText(frame, f"Label: {label_text}", (20,60), cv2.FONT_HERSHEY_SIMPLEX, 2, (0,255,0), 3)
+
+    cv2.imshow("Collect Finger Data - SPACE to record, ESC to quit", frame)
+    key = cv2.waitKey(1) & 0xFF
+
+    if key == 27:  # ESC
+        break
+    elif key == 32 and res.multi_hand_landmarks:  # SPACE to save
+        data = normalize_landmarks(hand.landmark)
+        data.append(label_text)
+        pd.DataFrame([data]).to_csv(OUTPUT_CSV, mode='a', header=False, index=False)
+        print(f"Saved frame as {label_text}")
+
+cap.release()
+cv2.destroyAllWindows()

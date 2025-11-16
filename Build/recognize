@@ -1,0 +1,72 @@
+# recognize_fingers.py
+import cv2
+import mediapipe as mp
+import numpy as np
+
+# --- MediaPipe ---
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7, max_num_hands=1)
+
+# --- Camera ---
+cap = cv2.VideoCapture(0)
+
+def fingers_up(hand_landmarks):
+    """
+    Returns number of fingers up (1-5)
+    Thumb is counted if extended to the side.
+    """
+    tips = [4, 8, 12, 16, 20]  # Thumb, Index, Middle, Ring, Pinky
+    fingers = []
+
+    # Thumb (compare x position for right hand)
+    if hand_landmarks.landmark[tips[0]].x < hand_landmarks.landmark[tips[0]-1].x:
+        fingers.append(1)
+    else:
+        fingers.append(0)
+
+    # Other fingers (compare y tip with pip joint)
+    for tip in tips[1:]:
+        if hand_landmarks.landmark[tip].y < hand_landmarks.landmark[tip-2].y:
+            fingers.append(1)
+        else:
+            fingers.append(0)
+
+    return sum(fingers)
+
+def map_number_to_letter(num):
+    mapping = {1: "a", 2: "b", 3: "c", 4: "d", 5: "e", 0: "None"}
+    return mapping.get(num, "None")
+
+# --- Main Loop ---
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    frame = cv2.flip(frame, 1)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    res = hands.process(rgb)
+
+    display_text = "None"
+
+    if res.multi_hand_landmarks:
+        hand = res.multi_hand_landmarks[0]
+        mp_drawing.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS)
+
+        num_fingers = fingers_up(hand)
+        display_text = map_number_to_letter(num_fingers)
+
+    # Draw overlay
+    overlay = frame.copy()
+    h, w, _ = frame.shape
+    cv2.rectangle(overlay, (10, 10), (250, 100), (0, 0, 0), -1)
+    alpha = 0.6
+    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+    cv2.putText(frame, f"Letter: {display_text}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 3)
+
+    cv2.imshow("Finger Count Recognition - Q to quit", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
